@@ -5,6 +5,7 @@ black==19.3b0
 blinker==1.4
 Click==7.0
 Flask==1.1.1
+Flask-Caching==1.7.2
 Flask-Cors==3.0.8
 Flask-Limiter==1.0.1
 Flask-RESTful==0.3.7
