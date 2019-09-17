@@ -85,8 +85,19 @@ def search(user_id):
     category = request.args.get("category")
     location = request.args.get("location")
 
-    if location is None:
-        return abort(400)
+    store = Table("store")
+    q = Query.from_(store).select("*").limit(10)
+
+    cursor = get_db().cursor()
+    cursor.execute(str(q))
+    records = cursor.fetchall()
+    cursor.close()
+
+    records = list(map(Store, records))
+    return jsonify(records)
+
+    # if location is None:
+    #     return abort(400)
 
 
 @app.route("/v1/merchants", methods=["GET"])
