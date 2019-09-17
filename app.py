@@ -1,15 +1,92 @@
 from flask import Flask
 from flask_cors import CORS
 from flask import jsonify, request, session, abort
+from pypika import MySQLQuery as Query, Table, Field
+import jwt
 
 import config
-import db
+from db import *
 
 from model.merchant import Merchant
+from model.category import Category
+from model.store import Store
+from model.transaction import Transaction
+from model.user import User
+
+import auth
 
 app = Flask(__name__)
 CORS(app)
 app.secret_key = config.SECRET_KEY
+
+
+@app.route("/v1/auth/login", methods=["POST"])
+def login():
+    if request.is_json:
+        data = request.get_json(silent=True)
+        if data == None:
+            abort(400)
+        else:
+            phone = data.get("phone")
+            password = data.get("password")
+
+            cursor = get_db().cursor()
+
+            user = Table("user")
+            q = (
+                Query.from_(user)
+                .select(user.id)
+                .where(user.phone == phone)
+                .where(user.password == password)
+            )
+
+            cursor.execute(str(q))
+            record = cursor.fetchone()
+            cursor.close()
+
+            if (record) != None:
+                return jsonify({"token": auth.encode(record[0])})
+            else:
+                abort(404)
+    else:
+        abort(400)
+
+
+@app.route("/v1/auth/me")
+@auth.token_required
+def user_info(user_id):
+
+    user = Table("user")
+    q = (
+        Query.from_(user)
+        .select(user.id, user.phone, user.name)
+        .where(user.id == user_id)
+    )
+
+    cursor = get_db().cursor()
+    cursor.execute(str(q))
+    record = cursor.fetchone()
+    cursor.close()
+
+    return jsonify(User(record))
+
+
+@app.route("/v1/auth/register")
+def register():
+    return True
+
+
+@app.route("/v1/search")
+@auth.token_required
+def search(user_id):
+    q = request.args.get("q")
+    sort = request.args.get("sort")
+    p = request.args.get("p")
+    category = request.args.get("category")
+    location = request.args.get("location")
+
+    if location is None:
+        return abort(400)
 
 
 @app.route("/v1/merchants", methods=["GET"])
@@ -19,7 +96,7 @@ def merchant():
 
     # SELECT * FROM posts WHERE category=1 AND id < 12345 ORDER BY id DESC LIMIT 10
 
-    cursor = db.db.cursor()
+    cursor = db.get_connection().cursor()
     cursor.execute("SELECT * FROM merchant LIMIT 0,10")
 
     records = cursor.fetchall()
@@ -31,9 +108,46 @@ def merchant():
     # )
 
 
-@app.route("/v1/merchant/<int:id>")
+@app.route("/v1/merchants/<int:id>", methods=["GET"])
 def merchant1(id):
+    res = {"error": "coac"}
+    if request.is_json:
+        data = request.get_json(silent=True)
+        if data == None:
+            return jsonify(**res), 400
+    else:
+        abort(400)
     return str(request.form["username"]) + "" + str(id)
+
+
+@app.route("/v1/categories", methods=["GET"])
+@auth.token_required
+def categories(user_id):
+    category = Table("category")
+    q = Query.from_(category).select(category.id, category.name)
+
+    cursor = get_db().cursor()
+    cursor.execute(str(q))
+    records = cursor.fetchall()
+    cursor.close()
+
+    records = list(map(Category, records))
+    return jsonify(records)
+
+
+# @app.route("/v1/categories/<int:id>", methods=["GET"])
+# @auth.token_required
+# def category(user_id, id):
+#     merchant = Table("merchant")
+#     q = Query.from_(merchant).select("*")
+
+#     cursor = get_db().cursor()
+#     cursor.execute(str(q))
+#     records = cursor.fetchall()
+#     cursor.close()
+
+#     records = list(map(Merchant, records))
+#     return jsonify(records)
 
 
 # resp.set_cookie('username', 'the username')

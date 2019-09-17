@@ -3,5 +3,6 @@ def Merchant(data):
         "id": data[0],
         "name": data[1],
         "address": data[2],
-        "category": data[3]
+        "price_range": data[3],
+        "category_id": data[4],
     }
