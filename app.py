@@ -94,7 +94,7 @@ def search(user_id):
     cursor.close()
 
     records = list(map(Store, records))
-    return jsonify(records)
+    return jsonify({"name": "Một cái tên nào đó", "stores": records})
 
     # if location is None:
     #     return abort(400)
