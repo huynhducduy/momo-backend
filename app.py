@@ -68,6 +68,15 @@ def user_info(user_id):
     record = cursor.fetchone()
     cursor.close()
 
+    transaction = Table("transaction")
+    q = "SELECT COUNT(*) FROM transaction WHERE user_id = " + str(record[0])
+    cursor = get_db().cursor()
+    cursor.execute(str(q))
+    trans = cursor.fetchone()
+    cursor.close()
+
+    record = record + (trans[0] == 0,)
+
     return jsonify(User(record))
 
 
@@ -79,14 +88,47 @@ def register():
 @app.route("/v1/search")
 @auth.token_required
 def search(user_id):
-    q = request.args.get("q")
-    sort = request.args.get("sort")
-    p = request.args.get("p")
-    category = request.args.get("category")
-    location = request.args.get("location")
+    q_arg = request.args.get("q")
+    sort_arg = request.args.get("sort")
+    p_arg = request.args.get("p")
+    category_arg = request.args.get("category")
+    location_arg = request.args.get("location")
 
+    if category_arg is None:
+        return abort(400)
+
+    category = Table("category")
+    merchant = Table("merchant")
     store = Table("store")
-    q = Query.from_(store).select("*").limit(10)
+
+    q = Query.from_(category).select(category.name).where(category.id == category_arg)
+    cursor = get_db().cursor()
+    cursor.execute(str(q))
+    category_name = cursor.fetchone()
+    cursor.close()
+
+    if category_name == None:
+        return abort(400)
+
+    q = (
+        Query.from_(merchant)
+        .select(merchant.id)
+        .where(merchant.category_id == category_arg)
+    )
+    cursor = get_db().cursor()
+    cursor.execute(str(q))
+    merchants = cursor.fetchall()
+    cursor.close()
+
+    q = Query.from_(store).select("*").where(store.merchant_id.isin(merchants))
+    if q_arg != None:
+        q = q.where(store.name.like("%" + q_arg + "%"))
+    if p_arg != None:
+        try:
+            p_arg = int(p_arg)
+            q = q.limit(str((p_arg - 1) * 10) + ", 10")
+        except ValueError:
+            return abort(400)
 
     cursor = get_db().cursor()
     cursor.execute(str(q))
@@ -94,10 +136,7 @@ def search(user_id):
     cursor.close()
 
     records = list(map(Store, records))
-    return jsonify({"name": "Một cái tên nào đó", "stores": records})
-
-    # if location is None:
-    #     return abort(400)
+    return jsonify({"name": category_name, "stores": records})
 
 
 @app.route("/v1/merchants", methods=["GET"])
