@@ -75,6 +75,8 @@ def user_info(user_id):
     trans = cursor.fetchone()
     cursor.close()
 
+    print(trans[0])
+
     record = record + (trans[0] == 0,)
 
     return jsonify(User(record))
