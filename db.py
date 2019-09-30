@@ -8,13 +8,19 @@ from pypika import MySQLQuery as Query, Table, Field
 
 def get_db():
     if "db" not in g:
-        g.db = mysql.connect(
-            host=config.MYSQL_HOST,
-            port=config.MYSQL_PORT,
-            user=config.MYSQL_USER,
-            password=config.MYSQL_PASS,
-            database=config.MYSQL_DATABASE,
-        )
+        cfg = {
+            "host": config.MYSQL_HOST,
+            "port": config.MYSQL_PORT,
+            "user": config.MYSQL_USER,
+            "password": config.MYSQL_PASS,
+            "database": config.MYSQL_DATABASE,
+        }
+        if config.MYSQL_UNIX_SOCKET == None:
+            cfg["host"] = config.MYSQL_HOST
+            cfg["port"] = int(config.MYSQL_PORT)
+        else:
+            cfg["unix_socket"] = config.MYSQL_UNIX_SOCKET
+        g.db = mysql.connect(**cfg)
     return g.db
 
 
