@@ -1,0 +1,7 @@
+.vscode
+.data
+.env.example
+cloud_sql_proxy
+Insomnia.json
+README.md
+requirements.txt
