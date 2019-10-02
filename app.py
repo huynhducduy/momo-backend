@@ -27,18 +27,21 @@ def login():
         if data == None:
             abort(400)
         else:
+            fb_id = data.get("fb_id")
             phone = data.get("phone")
             password = data.get("password")
 
             cursor = get_db().cursor()
 
             user = Table("user")
-            q = (
-                Query.from_(user)
-                .select(user.id)
-                .where(user.phone == phone)
+            q = Query.from_(user).select(user.id)
+
+            if fb_id != None:
+                q = q.where(user.fb_id == fb_id)
+            else:
+                q = q\
+                .where(user.phone == phone)\
                 .where(user.password == password)
-            )
 
             cursor.execute(str(q))
             record = cursor.fetchone()
@@ -52,14 +55,14 @@ def login():
         abort(400)
 
 
-@app.route("/v1/auth/me")
+@app.route("/v1/auth/me", methods=["GET"])
 @auth.token_required
 def user_info(user_id):
 
     user = Table("user")
     q = (
         Query.from_(user)
-        .select(user.id, user.phone, user.name)
+        .select(user.id, user.name, user.phone, user.fb_id, user.created_on)
         .where(user.id == user_id)
     )
 
@@ -82,49 +85,157 @@ def user_info(user_id):
     return jsonify(User(record))
 
 
-@app.route("/v1/auth/register")
+@app.route("/v1/auth/register", methods=["POST"])
 def register():
-    return True
+    if request.is_json:
+        data = request.get_json(silent=True)
+        if data == None:
+            abort(400)
+        else:
+            fb_id = data.get("fb_id")
+            phone = data.get("phone")
+            password = data.get("password")
+            name = data.get("name")
 
+            if phone == None or password == None or name == None:
+                abort(400)
 
-@app.route("/v1/search")
+            cursor = get_db().cursor()
+
+            user = Table("user")
+            q = Query.from_(user).select(user.id)
+            
+            if fb_id != None:
+                q = q.where((user.phone == phone) | (user.fb_id == fb_id))
+            else:
+                q = q.where(user.phone == phone)
+            q = q.limit(1)
+
+            cursor.execute(str(q))
+            record = cursor.fetchone()
+            cursor.close()
+
+            if record != None:
+                return jsonify({"mesage": "user existed"}), 400
+            else:
+                q = Query.into(user)
+
+                columns = ['phone', 'password', 'name']
+                values = [phone, password, name]
+
+                if fb_id != None:
+                    columns.append('fb_id')
+                    values.append(fb_id)
+
+                cursor = get_db().cursor()
+                q = q.columns(*columns).insert(*values)
+                cursor.execute(str(q))
+                record = cursor.fetchone()
+                cursor.close()
+
+                get_db().commit()
+
+                return {"message": "success"}, 200
+    else:
+        abort(400)
+
+@app.route("/v1/auth/connect", methods=["POST"])
+@auth.token_required
+def connect(user_id):
+    if request.is_json:
+        data = request.get_json(silent=True)
+        if data == None:
+            abort(400)
+        else:
+            fb_id = data.get("fb_id")
+
+            if fb_id == None:
+                abort(400)
+
+            cursor = get_db().cursor()
+
+            user = Table("user")
+            q = Query.from_(user).select(user.id).where(user.fb_id == fb_id).limit(1)
+
+            cursor.execute(str(q))
+            record = cursor.fetchone()
+            cursor.close()
+
+            if record != None:
+                return jsonify({"mesage": "facebok account connected to another user"}), 400
+            else:
+                q = Query.update(user).set(user.fb_id, fb_id).where(user.id == user_id)
+
+                cursor = get_db().cursor()
+                cursor.execute(str(q))
+                cursor.close()
+
+                get_db().commit()
+
+                return {"message": "success"}, 200
+    else:
+        abort(400)
+
+@app.route("/v1/auth/connect", methods=["DELETE"])
+@auth.token_required
+def disconnect(user_id):
+    user = Table("user")
+    q = Query.update(user).set(user.fb_id, None).where(user.id == user_id)
+
+    cursor = get_db().cursor()
+    cursor.execute(str(q))
+    cursor.close()
+
+    get_db().commit()
+
+    return {"message": "success"}, 200
+
+@app.route("/v1/search", methods=["GET"])
 @auth.token_required
 def search(user_id):
+    result = {}
+
     q_arg = request.args.get("q")
     sort_arg = request.args.get("sort")
     p_arg = request.args.get("p")
     category_arg = request.args.get("category")
     location_arg = request.args.get("location")
 
-    if category_arg is None:
-        return abort(400)
-
     category = Table("category")
     merchant = Table("merchant")
     store = Table("store")
 
-    q = Query.from_(category).select(category.name).where(category.id == category_arg)
-    cursor = get_db().cursor()
-    cursor.execute(str(q))
-    category_name = cursor.fetchone()
-    cursor.close()
+    q = Query.from_(store).select("*") # Default
 
-    if category_name == None:
-        return abort(400)
+    if category_arg == None:
+        q = q.join(merchant).on(merchant.id == store.merchant_id).join(category).on(merchant.category_id == category.id)
+    else:
 
-    q = (
-        Query.from_(merchant)
-        .select(merchant.id)
-        .where(merchant.category_id == category_arg)
-    )
-    cursor = get_db().cursor()
-    cursor.execute(str(q))
-    merchants = cursor.fetchall()
-    cursor.close()
+        q2 = Query.from_(category).select("*").where(category.id == category_arg)
+        cursor = get_db().cursor()
+        cursor.execute(str(q2))
+        record = cursor.fetchone()
+        cursor.close()
 
-    q = Query.from_(store).select("*").where(store.merchant_id.isin(merchants))
+        if record == None:
+            abort(400)
+        else:
+            result['category'] = Category(record)
+            q2 = (
+                Query.from_(merchant)
+                .select(merchant.id)
+                .where(merchant.category_id == category_arg)
+            )
+            cursor = get_db().cursor()
+            cursor.execute(str(q2))
+            merchants = cursor.fetchall()
+            cursor.close()
+
+            q = q.where(store.merchant_id.isin(merchants))
+
     if q_arg != None:
         q = q.where(store.name.like("%" + q_arg + "%"))
+
     if p_arg != None:
         try:
             p_arg = int(p_arg)
@@ -137,9 +248,47 @@ def search(user_id):
     records = cursor.fetchall()
     cursor.close()
 
-    records = list(map(Store, records))
-    return jsonify({"name": category_name, "stores": records})
+    newStore = lambda a: Store(a, 0)
+    if category_arg == None:
+        newStore = lambda a: Store(a, 2)
 
+    records = list(map(newStore, records))
+    result['stores'] = records
+    return jsonify(**result)
+
+
+@app.route("/v1/categories", methods=["GET"])
+@auth.token_required
+def categories(user_id):
+    category = Table("category")
+    q = Query.from_(category).select(category.id, category.name).orderby('order')
+
+    cursor = get_db().cursor()
+    cursor.execute(str(q))
+    records = cursor.fetchall()
+    cursor.close()
+
+    records = list(map(Category, records))
+    return jsonify(records)
+
+@app.route("/v1/suggest", methods=["GET"])
+@auth.token_required
+def suggest(user_id):
+    
+    q_arg = request.args.get("q")
+
+    if not q_arg:
+        return jsonify({"suggestions": []})
+    else:
+        q = "SELECT name FROM store WHERE MATCH (name) AGAINST ('" + str(q_arg) + "' IN NATURAL LANGUAGE MODE) LIMIT 0,5"
+
+        cursor = get_db().cursor()
+        cursor.execute(str(q))
+        records = cursor.fetchall()
+        cursor.close()
+
+        records = list(map(lambda x: x[0], records))
+        return jsonify({"suggestions": records})
 
 @app.route("/v1/merchants", methods=["GET"])
 def merchant():
@@ -170,22 +319,6 @@ def merchant1(id):
     else:
         abort(400)
     return str(request.form["username"]) + "" + str(id)
-
-
-@app.route("/v1/categories", methods=["GET"])
-@auth.token_required
-def categories(user_id):
-    category = Table("category")
-    q = Query.from_(category).select(category.id, category.name)
-
-    cursor = get_db().cursor()
-    cursor.execute(str(q))
-    records = cursor.fetchall()
-    cursor.close()
-
-    records = list(map(Category, records))
-    return jsonify(records)
-
 
 # @app.route("/v1/categories/<int:id>", methods=["GET"])
 # @auth.token_required
