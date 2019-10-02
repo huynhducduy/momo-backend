@@ -2,6 +2,8 @@ from flask import Flask
 from flask_cors import CORS
 from flask import jsonify, request, session, abort
 from pypika import MySQLQuery as Query, Table, Field
+from utils import fuzzy
+import time
 import jwt
 
 import config
@@ -12,6 +14,7 @@ from model.category import Category
 from model.store import Store
 from model.transaction import Transaction
 from model.user import User
+from model.suggestion import Suggestion
 
 import auth
 
@@ -39,9 +42,7 @@ def login():
             if fb_id != None:
                 q = q.where(user.fb_id == fb_id)
             else:
-                q = q\
-                .where(user.phone == phone)\
-                .where(user.password == password)
+                q = q.where(user.phone == phone).where(user.password == password)
 
             cursor.execute(str(q))
             record = cursor.fetchone()
@@ -104,7 +105,7 @@ def register():
 
             user = Table("user")
             q = Query.from_(user).select(user.id)
-            
+
             if fb_id != None:
                 q = q.where((user.phone == phone) | (user.fb_id == fb_id))
             else:
@@ -120,11 +121,11 @@ def register():
             else:
                 q = Query.into(user)
 
-                columns = ['phone', 'password', 'name']
-                values = [phone, password, name]
+                columns = ["phone", "password", "name", "created_on"]
+                values = [phone, password, name, int(time.time() * 1000)]
 
                 if fb_id != None:
-                    columns.append('fb_id')
+                    columns.append("fb_id")
                     values.append(fb_id)
 
                 cursor = get_db().cursor()
@@ -138,6 +139,7 @@ def register():
                 return {"message": "success"}, 200
     else:
         abort(400)
+
 
 @app.route("/v1/auth/connect", methods=["POST"])
 @auth.token_required
@@ -162,7 +164,10 @@ def connect(user_id):
             cursor.close()
 
             if record != None:
-                return jsonify({"mesage": "facebok account connected to another user"}), 400
+                return (
+                    jsonify({"mesage": "facebok account connected to another user"}),
+                    400,
+                )
             else:
                 q = Query.update(user).set(user.fb_id, fb_id).where(user.id == user_id)
 
@@ -175,6 +180,7 @@ def connect(user_id):
                 return {"message": "success"}, 200
     else:
         abort(400)
+
 
 @app.route("/v1/auth/connect", methods=["DELETE"])
 @auth.token_required
@@ -189,6 +195,7 @@ def disconnect(user_id):
     get_db().commit()
 
     return {"message": "success"}, 200
+
 
 @app.route("/v1/search", methods=["GET"])
 @auth.token_required
@@ -205,10 +212,15 @@ def search(user_id):
     merchant = Table("merchant")
     store = Table("store")
 
-    q = Query.from_(store).select("*") # Default
+    q = Query.from_(store).select("*")  # Default
 
-    if category_arg == None:
-        q = q.join(merchant).on(merchant.id == store.merchant_id).join(category).on(merchant.category_id == category.id)
+    if not category_arg:
+        q = (
+            q.join(merchant)
+            .on(merchant.id == store.merchant_id)
+            .join(category)
+            .on(merchant.category_id == category.id)
+        )
     else:
 
         q2 = Query.from_(category).select("*").where(category.id == category_arg)
@@ -220,7 +232,7 @@ def search(user_id):
         if record == None:
             abort(400)
         else:
-            result['category'] = Category(record)
+            result["category"] = Category(record)
             q2 = (
                 Query.from_(merchant)
                 .select(merchant.id)
@@ -253,15 +265,59 @@ def search(user_id):
         newStore = lambda a: Store(a, 2)
 
     records = list(map(newStore, records))
-    result['stores'] = records
+    result["stores"] = records
     return jsonify(**result)
+
+@app.route("/v1/suggest", methods=["GET"])
+@auth.token_required
+def suggest(user_id):
+
+    q_arg = request.args.get("q")
+    category_arg = request.args.get("category")
+
+    if not q_arg:
+        return jsonify({"suggestions": []})
+    else:
+
+        fuzz = fuzzy(q_arg)
+
+        q = (
+            "SELECT s.name, g.category_id, g.name FROM store AS s JOIN\
+            (SELECT category.name, category_id, merchant_id, COUNT(*) AS count FROM transaction\
+            JOIN store ON store.id = store_id\
+            JOIN merchant ON store.merchant_id = merchant.id\
+            JOIN category ON merchant.category_id = category.id\
+            GROUP BY merchant_id) AS g ON (s.name LIKE '%"
+            + str(q_arg)
+            + "%' OR MATCH (s.name) AGAINST ('"
+            + str(q_arg)
+            + "' IN NATURAL LANGUAGE MODE)"
+        )
+
+        # for i in fuzz:
+        #     q += " OR s.name LIKE '%" + str(i) + "%'"
+
+        q += ") AND s.merchant_id = g.merchant_id"
+
+        if category_arg:
+            q += " AND g.category_id = " + str(category_arg)
+
+        q += " ORDER BY g.count DESC LIMIT 0,10"
+
+        cursor = get_db().cursor()
+        cursor.execute(str(q))
+        records = cursor.fetchall()
+        cursor.close()
+
+        records = list(map(Suggestion, records))
+        return jsonify({"suggestions": records})
 
 
 @app.route("/v1/categories", methods=["GET"])
 @auth.token_required
 def categories(user_id):
     category = Table("category")
-    q = Query.from_(category).select(category.id, category.name).orderby('order')
+    q = Query.from_(category).select(category.id, category.name).orderby("order")
 
     cursor = get_db().cursor()
     cursor.execute(str(q))
@@ -271,24 +327,6 @@ def categories(user_id):
     records = list(map(Category, records))
     return jsonify(records)
 
-@app.route("/v1/suggest", methods=["GET"])
-@auth.token_required
-def suggest(user_id):
-    
-    q_arg = request.args.get("q")
-
-    if not q_arg:
-        return jsonify({"suggestions": []})
-    else:
-        q = "SELECT name FROM store WHERE MATCH (name) AGAINST ('" + str(q_arg) + "' IN NATURAL LANGUAGE MODE) LIMIT 0,5"
-
-        cursor = get_db().cursor()
-        cursor.execute(str(q))
-        records = cursor.fetchall()
-        cursor.close()
-
-        records = list(map(lambda x: x[0], records))
-        return jsonify({"suggestions": records})
 
 @app.route("/v1/merchants", methods=["GET"])
 def merchant():
@@ -319,6 +357,7 @@ def merchant1(id):
     else:
         abort(400)
     return str(request.form["username"]) + "" + str(id)
+
 
 # @app.route("/v1/categories/<int:id>", methods=["GET"])
 # @auth.token_required
