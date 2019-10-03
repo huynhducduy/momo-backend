@@ -246,6 +246,8 @@ def search(user_id):
     p_arg = request.args.get("p")
     category_arg = request.args.get("category")
     location_arg = request.args.get("location")
+    zone_arg = request.args.get("zone")
+    area_arg = request.args.get("area")
 
     category = Table("category")
     merchant = Table("merchant")
@@ -284,10 +286,16 @@ def search(user_id):
 
             q = q.where(store.merchant_id.isin(merchants))
 
-    if q_arg != None:
+    if q_arg:
         q = q.where(store.name.like("%" + q_arg + "%"))
 
-    if p_arg != None:
+    if zone_arg:
+        q = q.where(store.zone == int(zone_arg))
+
+    if area_arg:
+        q = q.where(store.area_level_2 == area_arg)
+
+    if p_arg:
         try:
             p_arg = int(p_arg)
             q = q.limit(str((p_arg - 1) * 10) + ", 10")
@@ -391,35 +399,22 @@ def categories(user_id):
     return jsonify(records)
 
 
-@app.route("/v1/merchants", methods=["GET"])
-def merchant():
-    # request.args.get('title', '')
-    # request.method
-
-    # SELECT * FROM posts WHERE category=1 AND id < 12345 ORDER BY id DESC LIMIT 10
-
-    cursor = db.get_connection().cursor()
-    cursor.execute("SELECT * FROM merchant LIMIT 0,10")
-
-    records = cursor.fetchall()
-    records = list(map(Merchant, records))
-    return jsonify(records)
-    # response = app.response_class(
-    #     response=json.dumps(data),
-    #     mimetype='application/json'
-    # )
+@app.route("/v1/not-interested/<int:id>", methods=["POST"])
+@auth.token_required
+def not_interested(user_id, id):
+    return jsonify({"message": "success"})
 
 
-@app.route("/v1/merchants/<int:id>", methods=["GET"])
-def merchant1(id):
-    res = {"error": "coac"}
-    if request.is_json:
-        data = request.get_json(silent=True)
-        if data == None:
-            return jsonify(**res), 400
-    else:
-        abort(400)
-    return str(request.form["username"]) + "" + str(id)
+@app.route("/v1/not-interested/<int:id>", methods=["DELETE"])
+@auth.token_required
+def interested(user_id, id):
+    return jsonify({"message": "success"})
+
+
+@app.route("/v1/not-interested", methods=["GET"])
+@auth.token_required
+def list_interested(user_id):
+    return jsonify({})
 
 
 # @app.route("/v1/categories/<int:id>", methods=["GET"])
