@@ -79,8 +79,6 @@ def user_info(user_id):
     trans = cursor.fetchone()
     cursor.close()
 
-    print(trans[0])
-
     record = record + (trans[0] == 0,)
 
     return jsonify(User(record))
@@ -124,12 +122,13 @@ def register():
                 columns = ["phone", "password", "name", "created_on"]
                 values = [phone, password, name, int(time.time() * 1000)]
 
-                if fb_id != None:
+                if fb_id:
                     columns.append("fb_id")
                     values.append(fb_id)
 
                 cursor = get_db().cursor()
                 q = q.columns(*columns).insert(*values)
+
                 cursor.execute(str(q))
                 record = cursor.fetchone()
                 cursor.close()
@@ -195,6 +194,46 @@ def disconnect(user_id):
     get_db().commit()
 
     return {"message": "success"}, 200
+
+
+@app.route("/v1/auth/me", methods=["POST"])
+@auth.token_required
+def change_info(user_id):
+    if request.is_json:
+        data = request.get_json(silent=True)
+        if data == None:
+            abort(400)
+        else:
+            phone = data.get("phone")
+            password = data.get("password")
+            name = data.get("name")
+
+            cursor = get_db().cursor()
+
+            user = Table("user")
+
+            q = Query.update(user)
+
+            if phone:
+                q = q.set(user.phone, phone)
+
+            if password:
+                q = q.set(user.password, password)
+
+            if name:
+                q = q.set(user.name, name)
+
+            q = q.where(user.id == user_id)
+
+            cursor = get_db().cursor()
+            cursor.execute(str(q))
+            cursor.close()
+
+            get_db().commit()
+
+            return {"message": "success"}, 200
+    else:
+        abort(400)
 
 
 @app.route("/v1/search", methods=["GET"])
@@ -268,6 +307,7 @@ def search(user_id):
     result["stores"] = records
     return jsonify(**result)
 
+
 @app.route("/v1/suggest", methods=["GET"])
 @auth.token_required
 def suggest(user_id):
@@ -311,6 +351,29 @@ def suggest(user_id):
 
         records = list(map(Suggestion, records))
         return jsonify({"suggestions": records})
+
+
+@app.route("/v1/zones", methods=["GET"])
+@auth.token_required
+def zones(user_id):
+
+    result = {}
+
+    store = Table("store")
+    q = "SELECT DISTINCT area_level_2, area_level_1, zone FROM store WHERE zone != 0 ORDER BY area_level_2"
+
+    cursor = get_db().cursor()
+    cursor.execute(str(q))
+    records = cursor.fetchall()
+    cursor.close()
+
+    if len(records) > 0:
+        for r in records:
+            if result.get(r[2]) == None:
+                result[r[2]] = []
+            result[r[2]].append(r[0])
+
+    return jsonify(result)
 
 
 @app.route("/v1/categories", methods=["GET"])
