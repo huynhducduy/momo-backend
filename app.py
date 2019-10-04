@@ -364,8 +364,6 @@ def search(user_id):
     if not category_arg:
         newStore = lambda a: Store(a, 0)
 
-    cursor = get_db().cursor()
-
     q = "INSERT INTO keyword(content, category, area, user_id, time, records"
 
     if zone_arg:
@@ -387,10 +385,11 @@ def search(user_id):
     )
 
     if zone_arg:
-        q += +"," + zone_arg
+        q += "," + zone_arg
 
     q += ")"
 
+    cursor = get_db().cursor()
     cursor.execute(q)
     cursor.close()
     get_db().commit()
@@ -500,19 +499,6 @@ def interested(user_id, id):
 def list_interested(user_id):
     return jsonify({})
 
-
-# @app.route("/v1/categories/<int:id>", methods=["GET"])
-# @auth.token_required
-# def category(user_id, id):
-#     merchant = Table("merchant")
-#     q = Query.from_(merchant).select("*")
-
-#     cursor = get_db().cursor()
-#     cursor.execute(str(q))
-#     records = cursor.fetchall()
-#     cursor.close()
-
-#     records = list(map(Merchant, records))
 #     return jsonify(records)
 
 
