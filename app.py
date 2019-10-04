@@ -5,6 +5,7 @@ from pypika import MySQLQuery as Query, Table, Field
 from utils import fuzzy
 import time
 import jwt
+from decimal import Decimal, DecimalException
 
 import config
 from db import *
@@ -248,22 +249,47 @@ def search(user_id):
     location_arg = request.args.get("location")
     zone_arg = request.args.get("zone")
     area_arg = request.args.get("area")
+    filter_arg = request.args.get("filter")
 
     category = Table("category")
     merchant = Table("merchant")
     store = Table("store")
 
-    q = Query.from_(store).select("*")  # Default
+    q = ""
+    haveLocation = False
 
-    if not category_arg:
-        q = (
-            q.join(merchant)
-            .on(merchant.id == store.merchant_id)
-            .join(category)
-            .on(merchant.category_id == category.id)
-        )
+    if location_arg:
+        locations = location_arg.split(",")
+        try:
+            locations[0] = Decimal(locations[0])
+            locations[1] = Decimal(locations[1])
+            q = (
+                "SELECT *, (6371*acos(cos(radians("
+                + str(locations[0])
+                + "))*cos(radians(lat))*cos(radians(`long`)-radians("
+                + str(locations[1])
+                + "))+sin(radians("
+                + str(locations[0])
+                + "))*sin(radians(lat)))) AS distance"
+            )
+            haveLocation = True
+        except (ValueError, DecimalException):
+            abort(400)
     else:
+        q = "SELECT *"
 
+    q += " FROM store"
+
+    if sort_arg:
+        if str(sort_arg) == "popular":
+            c = "SELECT store_id, COUNT(*) as count FROM transaction GROUP BY store_id"
+            q += " LEFT JOIN (" + c + ") AS count ON count.store_id = id"
+        elif str(sort_arg) == "match":
+            pass
+
+    wheres = []
+
+    if category_arg:
         q2 = Query.from_(category).select("*").where(category.id == category_arg)
         cursor = get_db().cursor()
         cursor.execute(str(q2))
@@ -284,21 +310,48 @@ def search(user_id):
             merchants = cursor.fetchall()
             cursor.close()
 
-            q = q.where(store.merchant_id.isin(merchants))
+            wheres.append(
+                "store.merchant_id IN (" + ",".join(str(i[0]) for i in merchants) + ")"
+            )
 
     if q_arg:
-        q = q.where(store.name.like("%" + q_arg + "%"))
+        wheres.append("store.name LIKE '%" + q_arg + "%'")
 
     if zone_arg:
-        q = q.where(store.zone == int(zone_arg))
+        wheres.append("store.zone = " + zone_arg)
 
     if area_arg:
-        q = q.where(store.area_level_2 == area_arg)
+        wheres.append("store.area_level_2 = '" + area_arg + "'")
+
+    q += " WHERE " + wheres[0]
+
+    for i in wheres[1:]:
+        q += " AND " + i
+
+    if filter_arg:
+        filters = filter_arg.split(";")
+        for i in filters:
+            splits = i.split(",")
+            if splits[0] == "distance":
+                if haveLocation:
+                    q += (
+                        " HAVING distance BETWEEN "
+                        + str(splits[1])
+                        + " AND "
+                        + str(splits[2])
+                    )
+
+    if sort_arg:
+        if str(sort_arg) == "popular":
+            q += " ORDER BY count.count DESC"
+        elif str(sort_arg) == "distance":
+            if haveLocation:
+                q += " ORDER BY distance ASC"
 
     if p_arg:
         try:
             p_arg = int(p_arg)
-            q = q.limit(str((p_arg - 1) * 10) + ", 10")
+            q += " LIMIT " + str((p_arg - 1) * 10) + ", 10"
         except ValueError:
             return abort(400)
 
@@ -308,8 +361,39 @@ def search(user_id):
     cursor.close()
 
     newStore = lambda a: Store(a, 0)
-    if category_arg == None:
-        newStore = lambda a: Store(a, 2)
+    if not category_arg:
+        newStore = lambda a: Store(a, 0)
+
+    cursor = get_db().cursor()
+
+    q = "INSERT INTO keyword(content, category, area, user_id, time, records"
+
+    if zone_arg:
+        q += ", zone"
+
+    q += (
+        ") VALUES('"
+        + q_arg
+        + "', '"
+        + category_arg
+        + "', '"
+        + area_arg
+        + "','"
+        + str(user_id[0])
+        + "',"
+        + str(int(time.time() * 1000))
+        + ","
+        + str(len(records))
+    )
+
+    if zone_arg:
+        q += +"," + zone_arg
+
+    q += ")"
+
+    cursor.execute(q)
+    cursor.close()
+    get_db().commit()
 
     records = list(map(newStore, records))
     result["stores"] = records
